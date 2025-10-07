@@ -384,6 +384,7 @@ Module ModuleSediment
     type       T_Sediment
         character(PathLength)                      :: SedGeometryFile       = null_str
         integer                                    :: InstanceID            = FillValueInt
+        character(PathLength)                      :: ModelName             = null_str        
         type (T_Size2D)                            :: Size, WorkSize
         type (T_Time)                              :: BeginTime, EndTime
         type (T_Evolution)                         :: Evolution
@@ -529,7 +530,8 @@ Module ModuleSediment
     !++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     !++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-    subroutine ConstructSediment(ObjSedimentID,                 &
+    subroutine ConstructSediment(ModelName,                             &
+                                 ObjSedimentID,                         &
                          ObjGridDataID,                         &
                          GeometryID,                            &
                          ObjHorizontalGridID,                   &
@@ -544,6 +546,7 @@ Module ModuleSediment
                          STAT)
 
         !Arguments-------------------------------------------------------------
+        character(Len=*)                                :: ModelName    
         integer                                         :: ObjSedimentID 
         integer                                         :: ObjGridDataID
         integer                                         :: GeometryID
@@ -587,6 +590,8 @@ Module ModuleSediment
 cd0 :   if (ready_ .EQ. OFF_ERR_) then
 
             call AllocateInstance
+
+            Me%ModelName = ModelName            
 
             Me%ObjTime           = AssociateInstance (mTIME_,           ObjTimeID          )
             Me%ObjBathym         = AssociateInstance (mGRIDDATA_,       ObjGridDataID      )
@@ -1063,7 +1068,7 @@ cd0 :   if (ready_ .EQ. OFF_ERR_) then
         if (STAT_CALL .NE. SUCCESS_) stop 'ConstructGlobalParameters - ModuleSediment - ERR200'
         
         if (Me%ConsolidationOn) then
-            if (Me%Evolution%Geometry == .false.) then
+            if (.not. Me%Evolution%Geometry) then
                 write(*,*) 'GEOMETRY_EVOLUTION must be activated to run with CONSOLIDATION'
                 stop 'ConstructGlobalParameters - ModuleSediment - ERR205'
             endif
@@ -1286,10 +1291,10 @@ cd0 :   if (ready_ .EQ. OFF_ERR_) then
             Me%DZ_Residual(:,:) = 0.
             
             allocate(Me%Residual%BedloadU(ILB:IUB, JLB:JUB))
-            Me%Residual%BedloadU(:,:) = null_real
+            Me%Residual%BedloadU(:,:) = 0.
 
             allocate(Me%Residual%BedloadV(ILB:IUB, JLB:JUB))
-            Me%Residual%BedloadV(:,:) = null_real
+            Me%Residual%BedloadV(:,:) = 0.
             
             if (Me%Evolution%Old) then
                 call ReadResidualStartTime()
@@ -1754,7 +1759,7 @@ i1:     if (VariableDT) then
         character(len=StringLength)                         :: TimeSerieName
         character(len=StringLength), dimension(:), pointer  :: PropertyList
         type (T_Polygon), pointer                           :: ModelDomainLimit
-        integer                                             :: FixedOutputs, NumberOfOutputs, n
+        integer                                             :: FixedOutputs, NumberOfOutputs, n, naux
 
 
         !----------------------------------------------------------------------
@@ -1763,37 +1768,48 @@ i1:     if (VariableDT) then
 
         !Allocates PropertyList
         if (Me%CohesiveClass%Run) then
-            FixedOutputs = 14
+            FixedOutputs = 13
         else
-            FixedOutputs = 11
+            FixedOutputs = 10
         endif
         
         NumberOfOutputs = FixedOutputs + Me%NumberOfClasses
+        
+        if (Me%Residual%ON) then        
+            NumberOfOutputs = NumberOfOutputs + 1
+        endif
         
         allocate(PropertyList(NumberOfOutputs), STAT = STAT_CALL)
         if (STAT_CALL /= 0) stop 'ConstructTimeSerie - ModuleSediment - ERR10'
 
         PropertyList(1) = 'DZ(m)'
-        PropertyList(2) = 'DZ_Residual(m)'
-        PropertyList(3) = 'D50(m)'
-        PropertyList(4) = 'Bedload(kg/s/m)'
-        PropertyList(5) = 'Bedload_X(kg/s/m)'
-        PropertyList(6) = 'Bedload_Y(kg/s/m)'
-        PropertyList(7) = 'Flux_Sand(kg/s/m2)'
-        PropertyList(8) = 'DM(kg)'
-        PropertyList(9) ='TotalBedload_Mass(kg)'
-        PropertyList(10) ='TotalFlux_Sand(kg)'
-        PropertyList(11) ='ShearStress(N/m2)'
+        PropertyList(2) = 'D50(m)'
+        PropertyList(3) = 'Bedload(kg/s/m)'
+        PropertyList(4) = 'Bedload_X(kg/s/m)'
+        PropertyList(5) = 'Bedload_Y(kg/s/m)'
+        PropertyList(6) = 'Flux_Sand(kg/s/m2)'
+        PropertyList(7) = 'DM(kg)'
+        PropertyList(8) ='TotalBedload_Mass(kg)'
+        PropertyList(9) ='TotalFlux_Sand(kg)'
+        PropertyList(10) ='ShearStress(N/m2)'
         
         if (Me%CohesiveClass%Run) then   
-            PropertyList(12) = 'Flux_Cohesive(kg/s/m2)'
-            PropertyList(13) ='TotalFlux_Cohesive(kg)'
-            PropertyList(14) ='CriticalShear_Cohesive(N/m2)'
+            PropertyList(11) = 'Flux_Cohesive(kg/s/m2)'
+            PropertyList(12) ='TotalFlux_Cohesive(kg)'
+            PropertyList(13) ='CriticalShear_Cohesive(N/m2)'
         endif
         
+        naux = FixedOutputs
+        
 do1:    do n=1,Me%NumberOfClasses    
-            PropertyList(FixedOutputs + n) = 'Ref_Concentration(kg/m3)_'//trim(adjustl(Me%SandClass(n)%ID%name))
+            naux = naux + 1
+            PropertyList(naux) = 'Ref_Concentration(kg/m3)_'//trim(adjustl(Me%SandClass(n)%ID%name))
+            
         enddo do1
+ 
+        if (Me%Residual%ON) then
+            PropertyList(naux+1) = 'DZ_Residual(m)'
+        endif
  
         call GetData(TimeSerieLocationFile,                                             &
                      Me%ObjEnterData, iflag,                                            &
@@ -1816,6 +1832,7 @@ do1:    do n=1,Me%NumberOfClasses
                             trim(TimeSerieLocationFile),                                &
                             PropertyList, "srsed",                                     &
                             WaterPoints2D = Me%ExternalVar%WaterPoints2D,               &
+                            ModelName     = Me%ModelName,                               &            
                             ModelDomain   = ModelDomainLimit,                           & 
                             STAT          = STAT_CALL)
         if (STAT_CALL /= 0) stop 'ConstructTimeSerie - ModuleSediment - ERR30'
@@ -1853,12 +1870,18 @@ do1:    do n=1,Me%NumberOfClasses
             if (CoordON) then
                 call GetXYCellZ(Me%ObjHorizontalGrid, CoordX, CoordY, Id, Jd, STAT = STAT_CALL)
                 
-                if (STAT_CALL /= SUCCESS_ .and. STAT_CALL /= OUT_OF_BOUNDS_ERR_) then
+                if (STAT_CALL == OUT_OF_BOUNDS_ERR_) then
+                    !Do nothing
+                
+                else
+                    if (STAT_CALL /= SUCCESS_) then
                     stop 'ConstructTimeSerie - ModuleSediment - ERR90'
                 endif                            
+                endif
 
                 call CorrectsCellsTimeSerie(Me%ObjTimeSerie, dn, Id, Jd, STAT = STAT_CALL)
                 if (STAT_CALL /= SUCCESS_) stop 'ConstructTimeSerie - ModuleSediment - ERR100'
+                
             endif
             
             call GetTimeSerieLocation(Me%ObjTimeSerie, dn,                              &  
@@ -1927,9 +1950,7 @@ do1:    do n=1,Me%NumberOfClasses
     
         !Local----------------------------------------------------------------
         real,   dimension(:,:), pointer     :: MappDZ  
-        integer                             :: ClientNumber
         integer                             :: STAT_CALL
-        logical                             :: BlockFound
 
 
         !------------------------------------------------------------------------    
@@ -2157,10 +2178,10 @@ cd2 :           if (BlockFound) then
                     Me%SandClass(n)%NDShearStress(:,:) = FillValueReal
                     
                     allocate(Me%SandClass(n)%BedloadU(ILB:IUB, JLB:JUB))
-                    Me%SandClass(n)%BedloadU(:,:) = null_real
+                    Me%SandClass(n)%BedloadU(:,:) = 0.
                         
                     allocate(Me%SandClass(n)%BedloadV(ILB:IUB, JLB:JUB))
-                    Me%SandClass(n)%BedloadV(:,:) = null_real
+                    Me%SandClass(n)%BedloadV(:,:) = 0.
                     
                     if (Me%WavesOn) then
                         
@@ -2315,6 +2336,7 @@ cd2 :           if (BlockFound) then
 
         !Local-------------------------------------------------------------------
         integer                         :: ILB, IUB, JLB, JUB, KLB, KUB
+        integer                         :: WILB, WIUB, WJLB, WJUB, WKLB, WKUB
         integer                         :: i, j, k, n
         real                            :: Percentage
         !----------------------------------------------------------------------
@@ -2326,15 +2348,26 @@ cd2 :           if (BlockFound) then
         KLB = Me%SedimentSize3D%KLB
         KUB = Me%SedimentSize3D%KUB
     
-        
         allocate(Me%TotalPercentage(ILB:IUB, JLB:JUB, KLB:KUB))
         Me%TotalPercentage(:,:,:)=0
         
+        WILB = Me%SedimentWorkSize3D%ILB
+        WIUB = Me%SedimentWorkSize3D%IUB
+        WJLB = Me%SedimentWorkSize3D%JLB
+        WJUB = Me%SedimentWorkSize3D%JUB
+        WKLB = Me%SedimentWorkSize3D%KLB
+        WKUB = Me%SedimentWorkSize3D%KUB        
+        
         if (Me%CohesiveClass%Run) then
             
-            do j=JLB, JUB
-            do i=ILB, IUB
-            do k=KLB, Me%KTop(i, j)
+            do j=WJLB, WJUB
+            do i=WILB, WIUB     
+                
+                if (Me%KTop(i, j) > WKUB) then
+                    stop 'CheckPercentageConsistence - ModuleSediment - ERR30'
+                endif
+                
+                do k=WKLB, Me%KTop(i, j)
                     
                 if (Me%ExternalVar%WaterPoints3D (i,j,k) == WaterPoint) then
                 
@@ -2346,9 +2379,14 @@ cd2 :           if (BlockFound) then
             enddo
         endif    
     
-        do j=JLB, JUB
-        do i=ILB, IUB
-        do k=KLB, Me%KTop(i, j)
+        do j=WJLB, WJUB
+        do i=WILB, WIUB
+            
+            if (Me%KTop(i, j) > WKUB) then
+                stop 'CheckPercentageConsistence - ModuleSediment - ERR40'
+            endif            
+            
+        do k=WKLB, Me%KTop(i, j)
                     
             if (Me%ExternalVar%WaterPoints3D (i,j,k) == WaterPoint) then
                 
@@ -2361,12 +2399,14 @@ cd2 :           if (BlockFound) then
                 enddo                
             endif
         enddo
+            
         enddo
         enddo
                                     
-        do j=JLB, JUB
-        do i=ILB, IUB
-        do k=KLB, Me%KTop(i, j)
+        do j=WJLB, WJUB
+        do i=WILB, WIUB
+        do k=WKLB, Me%KTop(i, j)
+            
                     
             if (Me%ExternalVar%WaterPoints3D (i,j,k) == WaterPoint) then
                 if (Me%TotalPercentage (i, j, k)  > 1.001) then
@@ -5756,6 +5796,7 @@ do1:    do n=1,Me%NumberOfClasses
         class(T_Sand), pointer :: SandClass
         integer                :: WILB, WIUB, WJLB, WJUB, WKUB
         real(8)                :: correction, MassWithdrawal
+        real                   :: RunPeriod
         !----------------------------------------------------------------------
         
         WILB = Me%SedimentWorkSize3D%ILB
@@ -5828,6 +5869,17 @@ do1:    do n=1,Me%NumberOfClasses
             enddo
             enddo
         enddo
+        
+        if (Me%Residual%ON) then
+
+            RunPeriod = Me%ExternalVar%Now- Me%Residual%StartTime
+                
+            Me%Residual%BedloadU(:,:) = ( Me%Residual%BedloadU(:,:) * (RunPeriod -  Me%Evolution%SedimentDT)          + &
+                                        Me%BedloadU(:,:) * Me%Evolution%SedimentDT) / RunPeriod
+                                           
+            Me%Residual%BedloadV(:,:) = ( Me%Residual%BedloadV(:,:) * (RunPeriod -  Me%Evolution%SedimentDT)          + &
+                                        Me%BedloadV(:,:) * Me%Evolution%SedimentDT) / RunPeriod
+        endif
 
     end subroutine FluxesCorrection
     
@@ -5836,7 +5888,6 @@ do1:    do n=1,Me%NumberOfClasses
     subroutine ComputeEvolution 
         
         !Local-----------------------------------------------------------------
-        real                    :: RunPeriod
         integer                 :: i, j, n
         class(T_Sand), pointer :: SandClass      
         integer                 :: WILB, WIUB, WJLB, WJUB
@@ -5864,17 +5915,6 @@ do1:    do n=1,Me%NumberOfClasses
            SandClass%DM(:, :) = 0.
            
            if (Me%BedloadMethod /= 0) then
-            
-               if (Me%Residual%ON) then
-
-                    RunPeriod = Me%ExternalVar%Now- Me%Residual%StartTime
-                
-                    Me%Residual%BedloadU(:,:) = ( Me%Residual%BedloadU(:,:) * (RunPeriod -  Me%Evolution%SedimentDT)          + &
-                                               SandClass%BedloadU(:,:) * Me%Evolution%SedimentDT) / RunPeriod
-                                           
-                    Me%Residual%BedloadV(:,:) = ( Me%Residual%BedloadV(:,:) * (RunPeriod -  Me%Evolution%SedimentDT)          + &
-                                               SandClass%BedloadV(:,:) * Me%Evolution%SedimentDT) / RunPeriod
-                endif
            
                 do j=WJLB, WJUB
                 do i=WILB, WIUB
@@ -7568,32 +7608,18 @@ do1:            do n=1,Me%NumberOfClasses
 
         !if (MonitorPerformance) call StartWatch ("ModuleSediment", "OutPut_TimeSeries")
 
-        !call WriteTimeSerie(Me%ObjTimeSerie,                                    &
-        !                    Data2D = Me%KTop, STAT = STAT_CALL)
-        !if (STAT_CALL /= SUCCESS_)                                              &
-        !    stop 'OutPut_TimeSeries - ModuleSediment - ERR01'
-
         call WriteTimeSerie(Me%ObjTimeSerie,                                    &
                             Data2D =Me%DZ, STAT = STAT_CALL)
         if (STAT_CALL /= SUCCESS_)                                              &
             stop 'OutPut_TimeSeries - ModuleSediment - ERR02'
         
-        if (Me%Residual%ON) then
-            call WriteTimeSerie(Me%ObjTimeSerie,                                    &
-                                Data2D =Me%DZ_Residual, STAT = STAT_CALL)
-            if (STAT_CALL /= SUCCESS_)                                              &
-                stop 'OutPut_TimeSeries - ModuleSediment - ERR03'
-        endif
+
 
         call WriteTimeSerie(Me%ObjTimeSerie,                                    &
                             Data2D_8 =Me%D50, STAT = STAT_CALL)
         if (STAT_CALL /= SUCCESS_)                                              &
             stop 'OutPut_TimeSeries - ModuleSediment - ERR04'
         
-        !call WriteTimeSerie(Me%ObjTimeSerie,                                    &
-        !                    Data2D =Me%Porosity, STAT = STAT_CALL)
-        !if (STAT_CALL /= SUCCESS_)                                              &
-        !    stop 'OutPut_TimeSeries - ModuleSediment - ERR05'
         
         call WriteTimeSerie(Me%ObjTimeSerie,                                    &
                             Data2D_8 = Me%Bedload, STAT = STAT_CALL)
@@ -7671,6 +7697,12 @@ do1:    do n=1,Me%NumberOfClasses
             stop 'OutPut_TimeSeries - ModuleSediment - ERR17'
         enddo do1
         
+        if (Me%Residual%ON) then
+            call WriteTimeSerie(Me%ObjTimeSerie,                                    &
+                                Data2D =Me%DZ_Residual, STAT = STAT_CALL)
+            if (STAT_CALL /= SUCCESS_)                                              &
+                stop 'OutPut_TimeSeries - ModuleSediment - ERR20'
+        endif
         
     end subroutine OutPut_TimeSeries
 
@@ -7794,7 +7826,7 @@ cd1 :   if (ready_ .NE. OFF_ERR_) then
                 endif
 
                 !Kills the TimeSerie
-                if (Me%TimeSerie) then
+                if (Me%ObjTimeSerie /= 0) then
                     call KillTimeSerie(Me%ObjTimeSerie, STAT = STAT_CALL)
                     if (STAT_CALL /= SUCCESS_) stop 'KillSediment - ModuleSediment - ERR20'
                 endif
